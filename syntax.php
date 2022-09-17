@@ -26,109 +26,115 @@ class syntax_plugin_filterrss extends DokuWiki_Syntax_Plugin {
 
 
     function connectTo($mode) {
-	$this->Lexer->addSpecialPattern('\[filterrss.*?\]',$mode,'plugin_filterrss');
+		$this->Lexer->addSpecialPattern('\[filterrss.*?\]',$mode,'plugin_filterrss');
     }
 
     function handle($match, $state, $pos, Doku_Handler $handler) {
+		// prepare data array
+        $data = [
+            'url' => null,
+            'conditions' => [],
+            'order_by' => '',
+            'desc' => false,
+            'limit' => 99999999,
+            'render' => 'pagelist'
+        ];
 
-	//Remove ] from the end
-	$match = substr($match, 0, -1);
-	//Remove [filterrss
-	$match = substr($match, 10);
+		// prepare the match
+		// Remove ']' from the end
+		$match = substr($match, 0, -1);
+		// Remove '[filterrss'
+		$match = substr($match, 10);
 
-	$known_fileds = array('pubDate', 'title', 'description', 'link');
-	$opposite_signs = array('>' => '<', '<' => '>', '>=' => '<=', '<=' => '>=');
+		// no only ' url condition1 && condition2 && condition3 ORDER BY field DESC/ASC LIMIT 10' is left
 
-	$query = preg_split('/order by/i', $match);
+		// prepare the operands and arguments template
+		$known_fileds = array('pubDate', 'title', 'description', 'link');
+		$opposite_signs = array('>' => '<', '<' => '>', '>=' => '<=', '<=' => '>=');
 
-	$args = trim($query[0]);
+		$query = preg_split('/order by/i', $match);
 
-	if( isset( $query[1] ) )
-	{
-	    $sort = trim($query[1]);
-	    //ASC ist't isteresting
-	    $sort = str_ireplace('asc', '', $sort);
+		if( isset( $query[1] ) )
+		{
+			$sort = trim($query[1]); // = 'field DESC/ASC LIMIT 10'
 
-	    $desc = false;
-	    if(stripos($sort, 'desc') !== false)
-	    {
-		$sort = str_ireplace('desc', '', $sort);
-		$desc = true;
-	    }
+			//ASC ist't isteresting -> is the default
+			$sort = str_ireplace('asc', '', $sort);
 
-	    //check if we define limit
-	    //I believe this's enough
-	    $limit = 99999999;
-	    $limit_reg = '/limit\s*([0-9]*)/i';
-	    if(preg_match($limit_reg, $sort, $matches) )
-	    {
-		$limit = (int)$matches[1];
-		$sort = preg_replace($limit_reg, '', $sort);
-	    }
+			if(stripos($sort, 'desc') !== false)
+			{
+				$sort = str_ireplace('desc', '', $sort);
+				$data['desc'] = true;
+			}
 
-	    $order_by = trim($sort);
-	} else
-	{
-	    //check if we define limit
-	    //I believe this's enough
-	    $limit = 99999999;
-	    $limit_reg = '/limit\s*([0-9]*)\s*$/i';
-	    if(preg_match($limit_reg, $args, $matches) )
-	    {
-		$limit = (int)$matches[1];
-		$query = preg_replace($limit_reg, '', $query);
-	    }
+			$limit_reg = '/limit\s*([0-9]*)/i';
+			if(preg_match($limit_reg, $sort, $matches) )
+			{
+				$data['limit'] = (int)$matches[1];
+				$sort = preg_replace($limit_reg, '', $sort);
+			}
 
-	}
+			$data['order_by'] = trim($sort); // = field (e.g. 'pubDate')
+		} else
+		{
+			$limit_reg = '/limit\s*([0-9]*)\s*$/i';
+			if(preg_match($limit_reg, $args, $matches) )
+			{
+				$data['limit'] = (int)$matches[1];
+				$query = preg_replace($limit_reg, '', $query);
+			}
 
-	$exploded = explode(' ', $args);
-	$url = $exploded[0];
-
-	//we have no arguments
-	if(count($exploded) < 3)
-	{
-	    return array('url' => $url, 'conditions' => array(), 'order_by' => $order_by, 'desc' => $desc, 'limit' => $limit);
-	}
-	array_shift($exploded);
-	array_shift($exploded);
+		}
 
 
-	$conditions = implode('', $exploded);
-	
-	//Remove ] from the end
-	$conditions = substr($conditions, 0, -1);
+		$args = trim($query[0]); // = 'url condition1 && condition2 && condition3'
+		$exploded = explode(' ', $args); // = [0 => url, 1 => condition1, ...]
+		
+		$data['url'] = $exploded[0];
 
-	$cond_array = explode('&&', $conditions);
+		// we have not enough arguments for conditions
+		if(count($exploded) < 2)
+		{
+			return $data;
+		}
 
-	$cond_output = array();
+		array_shift($exploded);
 
-	foreach($cond_array as $cond)
-	{
-	    preg_match('/(.*?)(>|<|=|>=|<=)+(.*)/', $cond, $res);
-	    if(in_array($res[1], $known_fileds))
-	    {
-		$name = $res[1];
-		$value = $res[3];
-		$sign = $res[2];
-	    } elseif(in_array($res[3], $known_fileds))
-	    {
-		$name = $res[3];
-		$value = $res[1];
-		$sign = $opposite_signs[$res[2]];
-	    } else
-	    {
-		continue;
-	    }
+		$conditions = implode('', $exploded);
 
-	    //remove "" and ''
-	    $value = str_replace(array('"', "'"), '', $value);
+		$cond_array = explode('&&', $conditions);
 
-	    if(!isset($cond_output[$name]))
-		$cond_output[$name] = array();
+		$cond_output = array();
 
-		array_push($cond_output[$name], array($sign, $value));
-	}
-	return array('url' => $url, 'conditions' => $cond_output, 'order_by' => $order_by, 'desc' => $desc, 'limit' => $limit);
+		foreach($cond_array as $cond)
+		{
+			preg_match('/(.*?)(>|<|=|>=|<=)+(.*)/', $cond, $res);
+			if(in_array($res[1], $known_fileds))
+			{
+			$name = $res[1];
+			$value = $res[3];
+			$sign = $res[2];
+			} elseif(in_array($res[3], $known_fileds))
+			{
+			$name = $res[3];
+			$value = $res[1];
+			$sign = $opposite_signs[$res[2]];
+			} else
+			{
+			continue;
+			}
+
+			//remove "" and ''
+			$value = str_replace(array('"', "'"), '', $value);
+
+			if(!isset($cond_output[$name]))
+			$cond_output[$name] = array();
+
+			array_push($cond_output[$name], array($sign, $value));
+		}
+		$data['conditions'] = $cond_output;
+
+		return $data;
     }
 
     function render($mode, Doku_Renderer $renderer, $data) {
@@ -139,141 +145,166 @@ class syntax_plugin_filterrss extends DokuWiki_Syntax_Plugin {
 	    $rss = simplexml_load_file($data['url']);
 	    $rss_array = array();
 
-	    if($rss)
+	    if(!$rss)
 	    {
-		$items = $rss->channel->item;
+			$renderer->doc .= 'Cannot load rss feed.';
+		}
+
+		$items = $rss->entry;
 		$items_count = 0;
 		foreach($items as $item)
 		{
-		    if( $items_count >= $data['limit'])
+			if( $items_count >= $data['limit'])
 			break;
-		    $items_count++;
-		    $jump_this_entry = false;
-		    foreach($data['conditions'] as $entry => $conditions)
-		    {
+			$items_count++;
+			$jump_this_entry = false;
+			foreach($data['conditions'] as $entry => $conditions)
+			{
 			switch($entry)
 			{
-			    case 'pubDate':
+				case 'pubDate':
 				foreach($conditions as $comparison)
 				{
-				    $left = strtotime($item->$entry);
-				    $right = strtotime($comparison[1]);
-				    switch($comparison[0])
-				    {
+					$left = strtotime($item->updated);
+					$right = strtotime($comparison[1]);
+					switch($comparison[0])
+					{
 					case '>':
-					    if(!($left > $right))
-					    {
+						if(!($left > $right))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
 					case '<':
-					    if(!($left < $right))
-					    {
+						if(!($left < $right))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
 					case '>=':
-					    if(!($left >= $right))
-					    {
+						if(!($left >= $right))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
 					case '<=':
-					    if(!($left <= $right))
-					    {
+						if(!($left <= $right))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
 					case '=':
-					    if(!($left == $right))
-					    {
+						if(!($left == $right))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
-				    }
+					}
 				}
-			    break;
-			    case 'title':
-			    case 'description':
-			    case 'link':
+				break;
+				case 'title':
+				case 'description':
+				case 'link':
 				foreach($conditions as $comparison)
 				{
-				    $subject = $item->$entry;
+					$subject = $item->$entry;
 
-				    //simple regexp option
-				    $pattern ='/'. str_replace('%', '.*', preg_quote($comparison[1])).'/';
+					//simple regexp option
+					$pattern ='/'. str_replace('%', '.*', preg_quote($comparison[1])).'/';
 
-				    switch($comparison[0])
-				    {
+					switch($comparison[0])
+					{
 					case '=':
-					    if(!preg_match($pattern, $subject))
-					    {
+						if(!preg_match($pattern, $subject))
+						{
 						$jump_this_entry = true;
 						break;
-					    }
+						}
 					break;
-				    }
+					}
 				}
-			    break;
+				break;
 			}
 
 			if($jump_this_entry == true)
-			    break;
-		    }
-		    if($jump_this_entry == false)
-		    {
+				break;
+			}
+			if($jump_this_entry == false)
+			{
 			$entry = array();
 			$entry['title'] = $item->title;
 			$entry['link'] = $item->link;
-			$entry['pubDate'] = strtotime($item->pubDate);
-			$entry['description'] = $item->description;
+			$entry['pubDate'] = strtotime($item->updated);
+			$entry['description'] = $item->summary->asXML();
 			
 			array_push($rss_array, $entry);
 
-		    }
+			}
 		}
+
 		if(!empty($data['order_by']))
 		{
-		    switch($data['order_by'])
-		    {
+			switch($data['order_by'])
+			{
 			case 'pubDate':
-			    $rss_array = $filterrss->int_sort($rss_array, $data['order_by']);
+				$rss_array = $filterrss->int_sort($rss_array, $data['order_by']);
 			break;
 			case 'title':
 			case 'description':
 			case 'link':
-			    $rss_array = $filterrss->nat_sort($rss_array, $data['order_by']);
+				$rss_array = $filterrss->nat_sort($rss_array, $data['order_by']);
 			break;
-		    }
-		    if($data['desc'])
-		    {
+			}
+			if($data['desc'])
+			{
 			$rss_array = array_reverse($rss_array);
-		    } 
+			} 
 		}
-		foreach($rss_array as $entry)
-		{
-		    $renderer->doc .= '<div class="filterrss_plugin">';
-		    $renderer->doc .= '<a href="'.$entry['link'].'">'.$entry['title'].'</a><br>';
-		    $renderer->doc .= '<span>'.date('d.m.Y',$entry['pubDate']).'</span>';
-		    if($this->getConf('bbcode') == true)
-		    {
-			$renderer->doc .= '<p>'.$filterrss->bbcode_parse($entry['description']).'</p>';
-		    } else
-		    {
-			$renderer->doc .= '<p>'.$entry['description'].'</p>';
-		    }
-		    $renderer->doc .= '</div>';
+
+		switch($data['render']) {
+			case 'list':
+				foreach($rss_array as $entry)
+				{
+					$renderer->doc .= '<div class="filterrss_plugin">';
+					$renderer->doc .= '<a href="'.$entry['link'].'">'.$entry['title'].'</a><br>';
+					$renderer->doc .= '<span>'.date('d.m.Y',$entry['pubDate']).'</span>';
+					if($this->getConf('bbcode') == true)
+					{
+					$renderer->doc .= '<p>'.$filterrss->bbcode_parse($entry['description']).'</p>';
+					} else
+					{
+					$renderer->doc .= '<p>'.$entry['description'].'</p>';
+					}
+					$renderer->doc .= '</div>';
+				}
+				break;
+			case 'pagelist':
+				/** @var helper_plugin_pagelist $pagelist */
+				$pagelist = @plugin_load('helper', 'pagelist');
+				if ($pagelist) {
+					$pagelist->setFlags(['desc','header','nouser','nofirsthl']);
+					$pagelist->startList();
+					foreach ($rss_array as $entry) {
+						$page['id'] = $entry['link']['href'];
+						$page['date'] = $entry['pubDate'];
+						$page['external'] = true;
+						$page['description'] = $entry['description'];
+						$page['title'] = $entry['title'];
+
+						$pagelist->addPage($page);
+					}
+					$renderer->doc .= $pagelist->finishList();
+				}
+				break;
 		}
-	    } else
-	    {
-		$renderer->doc .= 'Cannot load rss feed.';
-	    }
+
 	    return true;
+
         } elseif ($mode == "metadata") {
 	    $renderer->meta['plugin_filterrss']['purge'] = true;
 	}
